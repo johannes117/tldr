@@ -12,7 +12,13 @@ pub struct AnthropicProvider {
 impl AnthropicProvider {
     pub fn from_config(cfg: &AiConfig) -> Result<Self> {
         let api_key = std::env::var(&cfg.api_key_env)
-            .map_err(|_| anyhow!("env var {} not set", cfg.api_key_env))?;
+            .ok()
+            .filter(|s| !s.is_empty())
+            .or_else(|| crate::secrets::read("anthropic_api_key").ok().flatten())
+            .ok_or_else(|| anyhow!(
+                "no Anthropic API key found. Run `tldr init` or set {}",
+                cfg.api_key_env
+            ))?;
         let endpoint = if cfg.endpoint.is_empty() {
             "https://api.anthropic.com/v1/messages".to_string()
         } else {

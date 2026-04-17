@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
-use crate::{auth, github, repo, server, session, state, worktree};
+use crate::{auth, github, repo, secrets, server, session, state, worktree};
+use std::io::{self, BufRead, Write};
 
 #[derive(Parser, Debug)]
 #[command(name = "tldr", version, about = "Local-first PR review")]
@@ -35,6 +36,12 @@ pub enum Command {
         #[arg(long)]
         args: Option<String>,
     },
+    /// Interactive first-time setup: GitHub auth + Anthropic API key.
+    Init {
+        /// Skip interactive prompts; use existing env/config.
+        #[arg(long)]
+        non_interactive: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -57,6 +64,7 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
         Some(Command::Doctor { bundle }) => crate::doctor::run(bundle).await,
         Some(Command::Open { pr }) => open_cmd(pr).await,
         Some(Command::Editor { name, args }) => editor_cmd(name, args).await,
+        Some(Command::Init { non_interactive }) => init_cmd(non_interactive).await,
         None => {
             println!("usage: tldr <pr-number>   (see --help)");
             Ok(())
@@ -252,6 +260,103 @@ async fn open_cmd(pr: u64) -> Result<()> {
     open::that(&target).ok();
     println!("{target}");
     Ok(())
+}
+
+async fn init_cmd(non_interactive: bool) -> Result<()> {
+    println!("tldr init — first-time setup");
+    println!();
+
+    // 1. GitHub auth
+    match auth::get_token_with_source().await {
+        Ok((tok, src)) => {
+            let login = auth::fetch_login(&tok).await.unwrap_or_else(|_| "unknown".into());
+            println!("  [ok] GitHub: signed in as @{login} (source: {})", src.as_str());
+        }
+        Err(_) => {
+            if non_interactive {
+                println!("  [!] GitHub: not signed in. Run `tldr auth login`.");
+            } else {
+                print!("  [!] GitHub: not signed in. Sign in now via device flow? [Y/n] ");
+                io::stdout().flush().ok();
+                let mut line = String::new();
+                io::stdin().lock().read_line(&mut line).ok();
+                let ans = line.trim().to_lowercase();
+                if ans.is_empty() || ans == "y" || ans == "yes" {
+                    let tok = auth::device_login().await?;
+                    auth::store_token(&tok)?;
+                    let login = auth::fetch_login(&tok).await.unwrap_or_else(|_| "unknown".into());
+                    println!("  [ok] GitHub: signed in as @{login}");
+                } else {
+                    println!("  skipping GitHub sign-in; run `tldr auth login` later.");
+                }
+            }
+        }
+    }
+
+    // 2. Anthropic API key
+    let existing_env = std::env::var("ANTHROPIC_API_KEY").ok().filter(|s| !s.is_empty());
+    let existing_stored = secrets::read("anthropic_api_key").ok().flatten();
+    if existing_env.is_some() {
+        println!("  [ok] Anthropic: using ANTHROPIC_API_KEY from environment");
+    } else if existing_stored.is_some() {
+        println!("  [ok] Anthropic: API key already stored in keychain");
+    } else if non_interactive {
+        println!("  [!] Anthropic: no API key configured. Set ANTHROPIC_API_KEY or re-run `tldr init`.");
+    } else {
+        println!();
+        println!("  Enter your Anthropic API key (get one at https://console.anthropic.com/).");
+        print!("  Key (leave blank to skip): ");
+        io::stdout().flush().ok();
+        let key = read_secret_line()?;
+        let key = key.trim();
+        if key.is_empty() {
+            println!("  skipped. AI features will be disabled until a key is configured.");
+        } else {
+            secrets::store("anthropic_api_key", key)?;
+            println!("  [ok] Anthropic: API key stored in keychain");
+        }
+    }
+
+    // 3. Config: enable AI, save defaults
+    let mut cfg = crate::config::Config::load().unwrap_or_default();
+    let has_key = existing_env.is_some()
+        || existing_stored.is_some()
+        || secrets::read("anthropic_api_key").ok().flatten().is_some();
+    if has_key {
+        cfg.ai.enabled = true;
+    }
+    let p = cfg.save()?;
+    println!();
+    println!("  wrote config: {}", p.display());
+    println!();
+    println!("Setup complete. Try: `tldr <pr-number>` from inside a git repo.");
+    Ok(())
+}
+
+fn read_secret_line() -> Result<String> {
+    // Best-effort no-echo on unix; on failure, fall back to echoed stdin.
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::AsRawFd;
+        let stdin = io::stdin();
+        let fd = stdin.as_raw_fd();
+        unsafe {
+            let mut term: libc::termios = std::mem::zeroed();
+            if libc::tcgetattr(fd, &mut term) == 0 {
+                let orig = term;
+                term.c_lflag &= !libc::ECHO;
+                libc::tcsetattr(fd, libc::TCSANOW, &term);
+                let mut line = String::new();
+                let res = stdin.lock().read_line(&mut line);
+                libc::tcsetattr(fd, libc::TCSANOW, &orig);
+                println!();
+                return res.map(|_| line).map_err(Into::into);
+            }
+        }
+    }
+    let mut line = String::new();
+    io::stdin().lock().read_line(&mut line)?;
+    Ok(line)
 }
 
 async fn editor_cmd(name: String, args: Option<String>) -> Result<()> {

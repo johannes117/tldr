@@ -15,6 +15,7 @@ pub mod indexer;
 pub mod lsp;
 pub mod repo;
 pub mod rpc;
+pub mod secrets;
 pub mod server;
 pub mod session;
 pub mod state;
