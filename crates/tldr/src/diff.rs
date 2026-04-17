@@ -402,3 +402,108 @@ fn detect_moves(d: &mut Diff) {
 
     let _ = dels; // silence
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SIMPLE_DIFF: &str = "diff --git a/foo.txt b/foo.txt\nindex 111..222 100644\n--- a/foo.txt\n+++ b/foo.txt\n@@ -1,3 +1,4 @@\n line one\n-line two\n+line two changed\n+new line\n line three\n";
+
+    const RENAME_DIFF: &str = "diff --git a/old.txt b/new.txt\nsimilarity index 85%\nrename from old.txt\nrename to new.txt\n--- a/old.txt\n+++ b/new.txt\n@@ -1,2 +1,2 @@\n alpha\n-beta\n+gamma\n";
+
+    const BINARY_DIFF: &str = "diff --git a/img.bin b/img.bin\nindex abc..def 100644\nBinary files a/img.bin and b/img.bin differ\n";
+
+    const ADD_DEL_DIFF: &str = "diff --git a/added.rs b/added.rs\nnew file mode 100644\n--- /dev/null\n+++ b/added.rs\n@@ -0,0 +1,2 @@\n+hello\n+world\ndiff --git a/gone.rs b/gone.rs\ndeleted file mode 100644\n--- a/gone.rs\n+++ /dev/null\n@@ -1,1 +0,0 @@\n-bye\n";
+
+    #[test]
+    fn parses_simple_diff() {
+        let d = parse_unified(SIMPLE_DIFF);
+        assert_eq!(d.files.len(), 1);
+        let f = &d.files[0];
+        assert_eq!(f.path, "foo.txt");
+        assert_eq!(f.status, "modified");
+        assert_eq!(f.hunks.len(), 1);
+        let h = &f.hunks[0];
+        assert_eq!(h.old_start, 1);
+        assert_eq!(h.new_start, 1);
+        let adds = h.lines.iter().filter(|l| l.kind == "add").count();
+        let dels = h.lines.iter().filter(|l| l.kind == "del").count();
+        assert_eq!(adds, 2);
+        assert_eq!(dels, 1);
+    }
+
+    #[test]
+    fn parses_rename() {
+        let d = parse_unified(RENAME_DIFF);
+        assert_eq!(d.files.len(), 1);
+        let f = &d.files[0];
+        assert_eq!(f.status, "renamed");
+        assert_eq!(f.path, "new.txt");
+        assert_eq!(f.old_path.as_deref(), Some("old.txt"));
+    }
+
+    #[test]
+    fn parses_binary_paths() {
+        let paths = parse_binary_paths(BINARY_DIFF);
+        assert_eq!(paths, vec!["img.bin"]);
+    }
+
+    #[test]
+    fn parses_add_and_delete() {
+        let d = parse_unified(ADD_DEL_DIFF);
+        assert_eq!(d.files.len(), 2);
+        assert_eq!(d.files[0].status, "added");
+        assert_eq!(d.files[1].status, "deleted");
+    }
+
+    #[test]
+    fn is_generated_covers_common() {
+        assert!(is_generated_path("path/to/package-lock.json"));
+        assert!(is_generated_path("Cargo.lock"));
+        assert!(is_generated_path("foo.pb.go"));
+        assert!(is_generated_path("foo.min.js"));
+        assert!(is_generated_path("bar.generated.ts"));
+        assert!(!is_generated_path("src/main.rs"));
+        assert!(!is_generated_path(""));
+    }
+
+    #[test]
+    fn image_detection() {
+        assert!(is_image_path("logo.PNG"));
+        assert!(is_image_path("a/b/c.svg"));
+        assert!(!is_image_path("main.rs"));
+        assert_eq!(image_mime("x.png"), "image/png");
+        assert_eq!(image_mime("x.jpeg"), "image/jpeg");
+        assert_eq!(image_mime("x.svg"), "image/svg+xml");
+        assert_eq!(image_mime("x.bin"), "application/octet-stream");
+    }
+
+    #[test]
+    fn hunk_header_parses() {
+        assert_eq!(parse_hunk_header("@@ -10,5 +20,7 @@ ctx"), (10, 20));
+        assert_eq!(parse_hunk_header("@@ -1 +1 @@"), (1, 1));
+    }
+
+    #[test]
+    fn move_detection_links_runs() {
+        // 5 identical lines deleted from a.rs and added to b.rs
+        let text = "\
+diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1,5 +0,0 @@\n-line alpha one\n-line beta two\n-line gamma three\n-line delta four\n-line epsilon five\ndiff --git a/b.rs b/b.rs\n--- a/b.rs\n+++ b/b.rs\n@@ -0,0 +1,5 @@\n+line alpha one\n+line beta two\n+line gamma three\n+line delta four\n+line epsilon five\n";
+        let mut d = parse_unified(text);
+        detect_moves(&mut d);
+        let any_moved = d.files.iter().flat_map(|f| f.hunks.iter()).flat_map(|h| h.lines.iter()).any(|l| l.moved.is_some());
+        assert!(any_moved, "expected moves detected");
+    }
+
+    #[test]
+    fn large_file_placeholder() {
+        // Synthesize large diff (>5000 changed lines)
+        let mut s = String::from("diff --git a/big.txt b/big.txt\n--- a/big.txt\n+++ b/big.txt\n@@ -1,6000 +1,6000 @@\n");
+        for i in 0..6000 { s.push_str(&format!("-old line {i}\n+new line {i}\n")); }
+        let d = parse_unified(&s);
+        assert_eq!(d.files.len(), 1);
+        // Simulate large marking from compute_opts
+        let total_changed: usize = d.files[0].hunks.iter().map(|h| h.lines.iter().filter(|l| l.kind != "ctx").count()).sum();
+        assert!(total_changed > LARGE_THRESHOLD);
+    }
+}

@@ -1,0 +1,56 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  rust-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build UI (for rust-embed)
+        working-directory: ui
+        run: |
+          npm ci || npm install
+          npm run build
+      - name: cargo test
+        run: cargo test --all
+
+  ui-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install & build
+        working-directory: ui
+        run: |
+          npm ci || npm install
+          npm run build
+
+  ui-test:
+    runs-on: ubuntu-latest
+    needs: [ui-build]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install deps
+        working-directory: ui
+        run: |
+          npm ci || npm install
+      - name: Build UI
+        working-directory: ui
+        run: npm run build
+      - name: Install Playwright browsers
+        working-directory: ui
+        run: npx playwright install chromium --with-deps
+      - name: Run Playwright tests
+        working-directory: ui
+        run: npm test

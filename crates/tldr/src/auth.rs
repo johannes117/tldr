@@ -224,6 +224,46 @@ fn read_fallback_file() -> Result<Option<String>> {
         .map(|s| s.to_string()))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn token_source_as_str() {
+        assert_eq!(TokenSource::Env.as_str(), "env");
+        assert_eq!(TokenSource::Keychain.as_str(), "keychain");
+        assert_eq!(TokenSource::Gh.as_str(), "gh");
+    }
+
+    #[tokio::test]
+    async fn env_github_token_takes_precedence() {
+        // Snapshot & clear both
+        let prev_gh = std::env::var("GITHUB_TOKEN").ok();
+        let prev_gh2 = std::env::var("GH_TOKEN").ok();
+        std::env::set_var("GITHUB_TOKEN", "ghp_test_env_token");
+        std::env::remove_var("GH_TOKEN");
+        let (t, src) = get_token_with_source().await.unwrap();
+        assert_eq!(t, "ghp_test_env_token");
+        assert_eq!(src, TokenSource::Env);
+        // restore
+        match prev_gh { Some(v) => std::env::set_var("GITHUB_TOKEN", v), None => std::env::remove_var("GITHUB_TOKEN") }
+        if let Some(v) = prev_gh2 { std::env::set_var("GH_TOKEN", v); }
+    }
+
+    #[tokio::test]
+    async fn gh_token_fallback_when_no_github_token() {
+        let prev_gh = std::env::var("GITHUB_TOKEN").ok();
+        let prev_gh2 = std::env::var("GH_TOKEN").ok();
+        std::env::remove_var("GITHUB_TOKEN");
+        std::env::set_var("GH_TOKEN", "ghp_from_gh_token");
+        let (t, src) = get_token_with_source().await.unwrap();
+        assert_eq!(t, "ghp_from_gh_token");
+        assert_eq!(src, TokenSource::Env);
+        if let Some(v) = prev_gh { std::env::set_var("GITHUB_TOKEN", v); }
+        match prev_gh2 { Some(v) => std::env::set_var("GH_TOKEN", v), None => std::env::remove_var("GH_TOKEN") }
+    }
+}
+
 pub async fn fetch_login(token: &str) -> Result<String> {
     let http = reqwest::Client::builder().user_agent("tldr-cli").build()?;
     let v: serde_json::Value = http

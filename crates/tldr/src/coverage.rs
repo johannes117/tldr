@@ -350,3 +350,74 @@ pub fn line_str(h: Hit) -> &'static str {
         Hit::NotInstrumented => "none",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const LCOV: &str = "TN:\nSF:src/foo.rs\nDA:1,3\nDA:2,0\nDA:5,1\nend_of_record\nSF:src/bar.rs\nDA:10,2\nDA:11,0\nend_of_record\n";
+
+    const COBERTURA: &str = r#"<?xml version="1.0"?>
+<coverage>
+  <packages>
+    <package name="pkg">
+      <classes>
+        <class filename="app/main.py">
+          <lines>
+            <line number="1" hits="4"/>
+            <line number="2" hits="0"/>
+          </lines>
+        </class>
+      </classes>
+    </package>
+  </packages>
+</coverage>"#;
+
+    const GOCOVER: &str = "mode: set\nmain.go:10.20,12.30 2 1\nmain.go:14.2,16.5 1 0\nutil.go:1.1,3.1 3 5\n";
+
+    #[test]
+    fn lcov_parses() {
+        let m = parse_lcov(LCOV).unwrap();
+        assert_eq!(m.len(), 2);
+        let foo = &m["src/foo.rs"];
+        assert_eq!(foo.lines[&1], Hit::Covered);
+        assert_eq!(foo.lines[&2], Hit::Uncovered);
+        assert_eq!(foo.lines[&5], Hit::Covered);
+    }
+
+    #[test]
+    fn cobertura_parses() {
+        let m = parse_cobertura(COBERTURA).unwrap();
+        let f = &m["app/main.py"];
+        assert_eq!(f.lines[&1], Hit::Covered);
+        assert_eq!(f.lines[&2], Hit::Uncovered);
+    }
+
+    #[test]
+    fn go_cover_parses() {
+        let m = parse_go_cover(GOCOVER).unwrap();
+        assert!(m.contains_key("main.go"));
+        assert!(m.contains_key("util.go"));
+        let main = &m["main.go"];
+        // 10..=12 covered, 14..=16 uncovered
+        assert_eq!(main.lines[&10], Hit::Covered);
+        assert_eq!(main.lines[&15], Hit::Uncovered);
+    }
+
+    #[test]
+    fn parse_any_sniffs_format() {
+        assert!(parse_any(LCOV, None).is_ok());
+        assert!(parse_any(COBERTURA, None).is_ok());
+        assert!(parse_any(GOCOVER, None).is_ok());
+        assert!(parse_any(COBERTURA, Some("report.xml")).is_ok());
+        assert!(parse_any(GOCOVER, Some("coverage.out")).is_ok());
+        assert!(parse_any(LCOV, Some("report.info")).is_ok());
+    }
+
+    #[test]
+    fn line_str_variants() {
+        assert_eq!(line_str(Hit::Covered), "covered");
+        assert_eq!(line_str(Hit::Uncovered), "uncovered");
+        assert_eq!(line_str(Hit::NotInstrumented), "none");
+    }
+}

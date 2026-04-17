@@ -126,6 +126,88 @@ pub fn resolve_within(worktree: &Path, rel: &str) -> Result<PathBuf> {
     Ok(canon)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn vscode_args() {
+        let e = Editor::VsCode;
+        assert_eq!(e.command(), "code");
+        let args = e.args(&PathBuf::from("/x/foo.rs"), Some(10), Some(5));
+        assert_eq!(args, vec!["--goto".to_string(), "/x/foo.rs:10:5".into()]);
+        let args = e.args(&PathBuf::from("/x/foo.rs"), Some(10), None);
+        assert_eq!(args[1], "/x/foo.rs:10");
+        let args = e.args(&PathBuf::from("/x/foo.rs"), None, None);
+        assert_eq!(args[1], "/x/foo.rs");
+    }
+
+    #[test]
+    fn cursor_same_as_vscode() {
+        let e = Editor::Cursor;
+        assert_eq!(e.command(), "cursor");
+        let args = e.args(&PathBuf::from("/a"), Some(1), Some(2));
+        assert_eq!(args, vec!["--goto".to_string(), "/a:1:2".into()]);
+    }
+
+    #[test]
+    fn zed_args() {
+        let args = Editor::Zed.args(&PathBuf::from("/a.rs"), Some(3), Some(4));
+        assert_eq!(args, vec!["/a.rs:3:4".to_string()]);
+        let args = Editor::Zed.args(&PathBuf::from("/a.rs"), None, None);
+        assert_eq!(args, vec!["/a.rs".to_string()]);
+    }
+
+    #[test]
+    fn jetbrains_args() {
+        let args = Editor::JetBrains.args(&PathBuf::from("/a.rs"), Some(7), Some(2));
+        assert_eq!(args, vec!["--line", "7", "--column", "2", "/a.rs"]);
+    }
+
+    #[test]
+    fn neovim_args() {
+        let args = Editor::Neovim.args(&PathBuf::from("/a.rs"), Some(42), None);
+        assert_eq!(args, vec!["+42".to_string(), "/a.rs".into()]);
+        let args = Editor::Neovim.args(&PathBuf::from("/a.rs"), None, None);
+        assert_eq!(args, vec!["/a.rs".to_string()]);
+    }
+
+    #[test]
+    fn custom_args_template() {
+        let e = Editor::Custom { command: "myed".into(), args_template: "-f {path} -l {line}".into() };
+        let args = e.args(&PathBuf::from("/a.rs"), Some(5), None);
+        assert_eq!(args, vec!["-f", "/a.rs", "-l", "5"]);
+        assert_eq!(e.command(), "myed");
+    }
+
+    #[test]
+    fn parse_name_variants() {
+        assert!(matches!(parse_name("vscode").unwrap(), Editor::VsCode));
+        assert!(matches!(parse_name("VS-Code").unwrap(), Editor::VsCode));
+        assert!(matches!(parse_name("cursor").unwrap(), Editor::Cursor));
+        assert!(matches!(parse_name("zed").unwrap(), Editor::Zed));
+        assert!(matches!(parse_name("jetbrains").unwrap(), Editor::JetBrains));
+        assert!(matches!(parse_name("intellij").unwrap(), Editor::JetBrains));
+        assert!(matches!(parse_name("nvim").unwrap(), Editor::Neovim));
+        assert!(matches!(parse_name("vim").unwrap(), Editor::Neovim));
+        assert!(parse_name("sublime").is_err());
+    }
+
+    #[test]
+    fn resolve_within_rejects_absolute() {
+        let td = std::env::temp_dir();
+        assert!(resolve_within(&td, "/etc/passwd").is_err());
+    }
+
+    #[test]
+    fn resolve_within_rejects_escape() {
+        let td = std::env::temp_dir();
+        let r = resolve_within(&td, "../../../etc/passwd");
+        assert!(r.is_err());
+    }
+}
+
 pub fn parse_name(name: &str) -> Result<Editor> {
     Ok(match name.to_lowercase().as_str() {
         "code" | "vscode" | "vs-code" => Editor::VsCode,

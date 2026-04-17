@@ -59,3 +59,6 @@ default = []
 keychain = []
 
 [build-dependencies]
+
+[dev-dependencies]
+tempfile = "3"

@@ -145,4 +145,52 @@ mod tests {
         assert_eq!(co.owners_for("src/main.rs"), vec!["@carol"]);
         assert_eq!(co.owners_for("docs/guide.md"), vec!["@dave", "@team/eng"]);
     }
+
+    #[test]
+    fn last_match_wins() {
+        let co = CodeOwners::parse("* @a\n*.rs @b\n/src/special.rs @c\n");
+        assert_eq!(co.owners_for("src/special.rs"), vec!["@c"]);
+        assert_eq!(co.owners_for("other.rs"), vec!["@b"]);
+        assert_eq!(co.owners_for("README.md"), vec!["@a"]);
+    }
+
+    #[test]
+    fn team_and_email_owners() {
+        let co = CodeOwners::parse("api/ @org/api-team dev@example.com\n");
+        let o = co.owners_for("api/foo.ts");
+        assert!(o.contains(&"@org/api-team"));
+        assert!(o.contains(&"dev@example.com"));
+    }
+
+    #[test]
+    fn anchored_vs_recursive() {
+        let co = CodeOwners::parse("/tools/ @root-only\ntools/ @any-depth\n");
+        assert_eq!(co.owners_for("tools/x.py"), vec!["@any-depth"]);
+        assert_eq!(co.owners_for("vendor/tools/x.py"), vec!["@any-depth"]);
+    }
+
+    #[test]
+    fn double_star_matches_recursively() {
+        // ** should match across directories
+        assert!(matches_pattern("**/test_foo.py", "a/b/test_foo.py"));
+    }
+
+    #[test]
+    fn basename_pattern_any_depth() {
+        assert!(matches_pattern("*.md", "docs/guide.md"));
+        assert!(matches_pattern("*.md", "README.md"));
+        assert!(!matches_pattern("*.md", "main.rs"));
+    }
+
+    #[test]
+    fn no_match_returns_empty() {
+        let co = CodeOwners::parse("/only/ @x\n");
+        assert!(co.owners_for("other/file.rs").is_empty());
+    }
+
+    #[test]
+    fn comments_ignored() {
+        let co = CodeOwners::parse("# this is a comment\n* @a # inline\n");
+        assert_eq!(co.owners_for("x.md"), vec!["@a"]);
+    }
 }

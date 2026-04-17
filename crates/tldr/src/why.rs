@@ -402,6 +402,65 @@ fn find_release_notes(repo_root: &Path, shas: &[String]) -> Option<String> {
     None
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::repo::Slug;
+
+    #[test]
+    fn extracts_heading_section_for_path() {
+        let body = "# Summary\nblah\n\n## src/auth.rs\ndetails about auth\nmore\n\n## Other\nnope";
+        let s = extract_section_for_path(body, "src/auth.rs").unwrap();
+        assert!(s.contains("## src/auth.rs"));
+        assert!(s.contains("details about auth"));
+        assert!(!s.contains("## Other"));
+    }
+
+    #[test]
+    fn extracts_section_by_filename() {
+        let body = "## auth.rs\nthe reason\n";
+        let s = extract_section_for_path(body, "crates/tldr/src/auth.rs").unwrap();
+        assert!(s.contains("the reason"));
+    }
+
+    #[test]
+    fn no_section_returns_none() {
+        assert!(extract_section_for_path("", "x").is_none());
+        assert!(extract_section_for_path("no headings here", "x").is_none());
+    }
+
+    #[test]
+    fn external_link_extraction() {
+        let body = "See [linear task](https://linear.app/foo/TASK-1) and https://notion.so/page and https://example.com/ignored";
+        let links = scan_external_links(body);
+        assert!(links.iter().any(|l| l.url.contains("linear.app")));
+        assert!(links.iter().any(|l| l.url.contains("notion.so")));
+        assert!(!links.iter().any(|l| l.url.contains("example.com")));
+    }
+
+    #[test]
+    fn issue_refs_local_and_xrepo() {
+        let slug = Slug { owner: "o".into(), name: "r".into() };
+        let body = "Fixes #123 and also foo/bar#456 but not xyz123";
+        let issues = scan_body_issue_refs(body, &slug);
+        assert!(issues.iter().any(|i| i.number == 123 && i.url.contains("o/r/issues/123")));
+        assert!(issues.iter().any(|i| i.number == 456 && i.url.contains("foo/bar/issues/456")));
+    }
+
+    #[test]
+    fn issue_ref_dedup() {
+        let slug = Slug { owner: "o".into(), name: "r".into() };
+        let body = "#5 #5 #5";
+        let issues = scan_body_issue_refs(body, &slug);
+        assert_eq!(issues.len(), 1);
+    }
+
+    #[test]
+    fn format_ts_zero() {
+        assert_eq!(format_ts(0), "1970-01-01T00:00:00+00:00");
+    }
+}
+
 fn extract_changelog_section(text: &str, sha: &str, short: &str) -> Option<String> {
     let lines: Vec<&str> = text.lines().collect();
     for (i, l) in lines.iter().enumerate() {

@@ -2828,6 +2828,7 @@ dependencies = [
  "serde_json",
  "subtle",
  "tar",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "tokio-stream",
