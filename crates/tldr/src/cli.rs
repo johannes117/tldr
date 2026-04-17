@@ -20,7 +20,7 @@ pub enum Command {
     List,
     Status { pr: Option<u64> },
     Stop { pr: Option<u64>, #[arg(long)] all: bool },
-    Auth { #[command(subcommand)] cmd: AuthCmd },
+    Auth { #[command(subcommand)] cmd: Option<AuthCmd> },
     Config { #[command(subcommand)] cmd: ConfigCmd },
     Doctor {
         #[arg(long)]
@@ -189,16 +189,37 @@ async fn stop(_pr: Option<u64>, all: bool) -> Result<()> {
     Ok(())
 }
 
-async fn auth_cmd(cmd: AuthCmd) -> Result<()> {
+async fn auth_cmd(cmd: Option<AuthCmd>) -> Result<()> {
+    let cmd = match cmd {
+        Some(c) => c,
+        None => {
+            println!("usage: tldr auth <login|logout|status>");
+            println!("  login   Sign in via GitHub device flow");
+            println!("  logout  Remove stored credentials");
+            println!("  status  Show current authentication status");
+            return Ok(());
+        }
+    };
     match cmd {
         AuthCmd::Status => {
-            match auth::token().await {
-                Ok(_) => println!("authenticated"),
-                Err(e) => println!("not authenticated: {e}"),
+            match auth::get_token_with_source().await {
+                Ok((tok, src)) => match auth::fetch_login(&tok).await {
+                    Ok(login) => println!("Signed in as @{login} (source: {})", src.as_str()),
+                    Err(e) => println!("token present (source: {}) but /user failed: {e}", src.as_str()),
+                },
+                Err(_) => println!("Not signed in"),
             }
         }
-        AuthCmd::Login => println!("run `gh auth login` or set GITHUB_TOKEN"),
-        AuthCmd::Logout => println!("(stub) logout"),
+        AuthCmd::Login => {
+            let tok = auth::device_login().await?;
+            auth::store_token(&tok)?;
+            let login = auth::fetch_login(&tok).await.unwrap_or_else(|_| "unknown".into());
+            println!("Signed in as @{login}");
+        }
+        AuthCmd::Logout => {
+            auth::clear_token()?;
+            println!("Signed out");
+        }
     }
     Ok(())
 }

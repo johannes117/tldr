@@ -2,6 +2,7 @@ import { Link, useParams } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { api, type Draft } from "../api";
+import { CommentComposer } from "../components/CommentComposer";
 
 export function PrReview() {
   const { number } = useParams({ from: "/pr/$number/review" });
@@ -20,6 +21,14 @@ export function PrReview() {
       setVerdict(draftQ.data.verdict || "comment");
     }
   }, [draftQ.data]);
+
+  useEffect(() => {
+    if (!draftQ.data) return;
+    const t = setTimeout(() => {
+      api.putDraft(n, { ...draftQ.data!, body, verdict }).catch(() => {});
+    }, 300);
+    return () => clearTimeout(t);
+  }, [body, verdict, n, draftQ.data]);
 
   const save = async (): Promise<Draft | undefined> => {
     if (!draftQ.data) return;
@@ -66,7 +75,7 @@ export function PrReview() {
 
       <div className="mb-4">
         <div className="text-sm font-medium mb-1">Summary</div>
-        <textarea className="w-full border rounded p-2 text-sm" rows={6} value={body} onChange={(e) => setBody(e.target.value)} />
+        <CommentComposer value={body} onChange={setBody} prNumber={n} rows={8} />
       </div>
 
       <div className="mb-4">

@@ -1,6 +1,21 @@
-export type Line = { kind: "add" | "del" | "ctx"; content: string; old_line: number | null; new_line: number | null };
+export type MovedLink = { kind: "moved-from" | "moved-to"; path: string; line: number };
+export type Line = { kind: "add" | "del" | "ctx"; content: string; old_line: number | null; new_line: number | null; moved?: MovedLink | null };
 export type Hunk = { header: string; old_start: number; new_start: number; lines: Line[] };
-export type FileDiff = { path: string; old_path: string | null; status: string; hunks: Hunk[] };
+export type Stats = { added: number; removed: number };
+export type ImagePayload = { old_data_url: string | null; new_data_url: string | null };
+export type FileDiff = {
+  path: string;
+  old_path: string | null;
+  status: string;
+  similarity?: number | null;
+  hunks: Hunk[];
+  is_generated?: boolean;
+  is_large?: boolean;
+  is_binary?: boolean;
+  is_image?: boolean;
+  stats?: Stats;
+  image?: ImagePayload | null;
+};
 export type Diff = { files: FileDiff[] };
 
 export type PrMeta = {
@@ -45,6 +60,10 @@ function getq(url: string): Promise<Response> {
 export const api = {
   pr: (n: number) => getq(`/api/pr/${n}`).then((r) => j<{ pr: PrMeta; worktree: string; slug: string }>(r)),
   diff: (n: number) => getq(`/api/pr/${n}/diff`).then((r) => j<Diff>(r)),
+  diffFile: (n: number, path: string, expand = true) =>
+    getq(`/api/pr/${n}/diff/file?path=${encodeURIComponent(path)}&expand=${expand}`).then((r) => j<FileDiff>(r)),
+  collaborators: (n: number) =>
+    getq(`/api/pr/${n}/collaborators`).then((r) => j<{ logins: string[] }>(r)),
   getDraft: (n: number) => getq(`/api/pr/${n}/draft`).then((r) => j<Draft>(r)),
   putDraft: (n: number, d: Draft) => mut(`/api/pr/${n}/draft`, "PUT", d).then((r) => j<Draft>(r)),
   addComment: (n: number, c: { path: string; line: number; side?: string; body: string }) =>

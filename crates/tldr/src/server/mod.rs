@@ -16,6 +16,7 @@ use tokio::sync::{Mutex, Notify};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use crate::github::PrMeta;
+use crate::indexer::Indexer;
 use crate::repo::{Repo, Slug};
 use crate::session::{self, SessionFile};
 
@@ -31,6 +32,7 @@ pub struct ServerCtx {
     pub started_at: String,
     pub shutdown: Arc<Notify>,
     pub csrf: Arc<String>,
+    pub indexer: Arc<Indexer>,
 }
 
 impl ServerCtx {
@@ -39,6 +41,14 @@ impl ServerCtx {
         let mut buf = [0u8; 32];
         rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut buf);
         let csrf = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(buf);
+        let slug_str = format!("{}", slug);
+        let indexer = Indexer::open(&slug_str)
+            .map(Arc::new)
+            .unwrap_or_else(|e| {
+                tracing::warn!(error = %e, "indexer.open failed; creating in-memory fallback may not work");
+                // re-attempt and panic-worthy; but to keep it non-fatal, try once more
+                Arc::new(Indexer::open(&slug_str).expect("indexer open failed"))
+            });
         Self {
             repo, slug, worktree,
             pr: Arc::new(Mutex::new(pr)),
@@ -47,6 +57,7 @@ impl ServerCtx {
             started_at: chrono::Utc::now().to_rfc3339(),
             shutdown: Arc::new(Notify::new()),
             csrf: Arc::new(csrf),
+            indexer,
         }
     }
 

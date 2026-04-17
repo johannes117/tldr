@@ -1,0 +1,54 @@
+{
+  "name": "tldr-vscode",
+  "displayName": "tldr Review",
+  "description": "Inline PR review for tldr worktrees",
+  "version": "0.1.0",
+  "publisher": "tldr",
+  "engines": { "vscode": "^1.85.0" },
+  "main": "./dist/extension.js",
+  "extensionKind": ["workspace"],
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "commands": [
+      { "command": "tldr.markViewed", "title": "tldr: Mark File Viewed" },
+      { "command": "tldr.addComment", "title": "tldr: Add Comment on Selection" },
+      { "command": "tldr.replyToComment", "title": "tldr: Reply to Comment" },
+      { "command": "tldr.openBrowser", "title": "tldr: Open in Browser" },
+      { "command": "tldr.refresh", "title": "tldr: Refresh" }
+    ],
+    "views": {
+      "explorer": [
+        { "id": "tldrReview", "name": "tldr Review" }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        { "command": "tldr.refresh", "when": "view == tldrReview", "group": "navigation" }
+      ],
+      "editor/context": [
+        { "command": "tldr.addComment", "group": "tldr" },
+        { "command": "tldr.markViewed", "group": "tldr" }
+      ]
+    },
+    "configuration": {
+      "title": "tldr",
+      "properties": {
+        "tldr.pollInterval": { "type": "number", "default": 5000, "description": "Poll interval (ms) for refreshing comments." },
+        "tldr.serverUrl": { "type": "string", "default": "", "description": "Override server URL autodiscovery (e.g. http://127.0.0.1:8787)." },
+        "tldr.csrfToken": { "type": "string", "default": "", "description": "Override CSRF token autodiscovery." }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node18",
+    "watch": "npm run compile -- --watch",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.24.0",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.3.0"
+  }
+}

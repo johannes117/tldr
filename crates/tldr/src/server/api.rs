@@ -1,6 +1,6 @@
 // MVP uses plain REST. TODO(future): JSON-RPC + WebSocket for realtime.
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post, put},
@@ -8,6 +8,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::HashMap;
 
 use super::ServerCtx;
 use crate::{config, diff, draft, editor, github, state, worktree};
@@ -20,10 +21,14 @@ pub fn router() -> Router<ServerCtx> {
         .route("/session/shutdown", post(post_shutdown))
         .route("/pr/:n", get(get_pr))
         .route("/pr/:n/diff", get(get_diff))
+        .route("/pr/:n/diff/file", get(get_diff_file))
+        .route("/pr/:n/collaborators", get(get_collaborators))
         .route("/pr/:n/draft", get(get_draft).put(put_draft))
         .route("/pr/:n/comments", post(post_comment))
         .route("/pr/:n/files/*path/state", put(put_file_state))
         .route("/pr/:n/submit", post(post_submit))
+        .route("/pr/:n/symbols", get(get_symbols))
+        .route("/pr/:n/index-status", get(get_index_status))
         .route("/editor/open", post(post_editor_open))
 }
 
@@ -76,8 +81,31 @@ async fn post_open_pr(State(ctx): State<ServerCtx>, Json(b): Json<OpenPrBody>) -
         let d = draft::load(&draft_path, b.pr_number).map_err(err)?;
         draft::save(&draft_path, &d).map_err(err)?;
     }
-    ctx.prs.lock().await.push(meta);
+    ctx.prs.lock().await.push(meta.clone());
     ctx.write_session().await.ok();
+
+    // Spawn background indexing for base + head.
+    let indexer = ctx.indexer.clone();
+    let slug_str = format!("{}", ctx.slug);
+    let worktree = wt.clone();
+    let repo_root = ctx.repo.root.clone();
+    let meta_clone = meta.clone();
+    tokio::task::spawn_blocking(move || {
+        let merge_base = worktree::merge_base(&repo_root, &meta_clone.base_sha, &meta_clone.head_sha).ok();
+        if let Err(e) = indexer.record_pr(
+            &slug_str, meta_clone.number, &meta_clone.head_sha, &meta_clone.base_sha,
+            merge_base.as_deref(), Some(&meta_clone.title), meta_clone.body.as_deref(), meta_clone.author.as_deref(),
+        ) { tracing::warn!(error = %e, "record_pr failed"); }
+        tracing::info!(target: "index.phase", phase = "start", sha = %meta_clone.base_sha, "indexing base");
+        if let Err(e) = indexer.index_tree(&slug_str, &meta_clone.base_sha, &worktree) {
+            tracing::warn!(error = %e, "index base failed");
+        }
+        tracing::info!(target: "index.phase", phase = "start", sha = %meta_clone.head_sha, "indexing head");
+        if let Err(e) = indexer.index_tree(&slug_str, &meta_clone.head_sha, &worktree) {
+            tracing::warn!(error = %e, "index head failed");
+        }
+    });
+
     Ok(Json(json!({"ok": true, "pr": b.pr_number})))
 }
 
@@ -110,6 +138,42 @@ async fn get_diff(State(ctx): State<ServerCtx>, Path(n): Path<u64>) -> Result<Js
     let base = worktree::merge_base(&ctx.repo.root, &pr.base_sha, &pr.head_sha).map_err(err)?;
     let d = diff::compute(&ctx.worktree, &base, &pr.head_sha).map_err(err)?;
     Ok(Json(d))
+}
+
+#[derive(Deserialize)]
+struct DiffFileQuery { path: String, #[serde(default)] expand: bool }
+
+async fn get_diff_file(
+    State(ctx): State<ServerCtx>,
+    Path(_n): Path<u64>,
+    Query(q): Query<DiffFileQuery>,
+) -> Result<Json<diff::FileDiff>, (StatusCode, String)> {
+    let pr = ctx.pr.lock().await.clone();
+    let base = worktree::merge_base(&ctx.repo.root, &pr.base_sha, &pr.head_sha).map_err(err)?;
+    let _ = q.expand;
+    let f = diff::compute_file(&ctx.worktree, &base, &pr.head_sha, &q.path)
+        .map_err(err)?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "file not found".to_string()))?;
+    Ok(Json(f))
+}
+
+async fn get_collaborators(
+    State(ctx): State<ServerCtx>,
+    Path(_n): Path<u64>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let client = github::Client::new(ctx.token.clone());
+    let url = format!(
+        "https://api.github.com/repos/{}/{}/collaborators?per_page=100",
+        ctx.slug.owner, ctx.slug.name
+    );
+    let arr: serde_json::Value = github::rest_json(&client, reqwest::Method::GET, &url, None)
+        .await
+        .unwrap_or(serde_json::Value::Array(vec![]));
+    let logins: Vec<String> = arr
+        .as_array()
+        .map(|a| a.iter().filter_map(|v| v.get("login").and_then(|x| x.as_str()).map(String::from)).collect())
+        .unwrap_or_default();
+    Ok(Json(json!({ "logins": logins })))
 }
 
 async fn get_draft(State(ctx): State<ServerCtx>, Path(n): Path<u64>) -> Result<Json<draft::Draft>, (StatusCode, String)> {
@@ -162,6 +226,34 @@ async fn put_file_state(
     if let Some(c) = b.collapsed { entry.collapsed = c; }
     draft::save(&path, &d).map_err(err)?;
     Ok(Json(d))
+}
+
+async fn get_symbols(
+    State(ctx): State<ServerCtx>,
+    Path(_n): Path<u64>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let path = q.get("path").cloned().ok_or((StatusCode::BAD_REQUEST, "path required".into()))?;
+    let side = q.get("side").map(String::as_str).unwrap_or("head");
+    let pr = ctx.pr.lock().await.clone();
+    let sha = if side == "base" { pr.base_sha.clone() } else { pr.head_sha.clone() };
+    let slug_str = format!("{}", ctx.slug);
+    let syms = ctx.indexer.symbols_for_file(&slug_str, &sha, &path).map_err(err)?;
+    Ok(Json(json!({ "symbols": syms, "commit_sha": sha, "path": path, "side": side })))
+}
+
+async fn get_index_status(
+    State(ctx): State<ServerCtx>,
+    Path(_n): Path<u64>,
+) -> Json<serde_json::Value> {
+    let s = ctx.indexer.status();
+    Json(json!({
+        "phase": s.phase,
+        "files_done": s.files_done,
+        "files_total": s.files_total,
+        "symbols_count": s.symbols_count,
+        "errors": s.errors,
+    }))
 }
 
 #[derive(Serialize)]
