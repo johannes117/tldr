@@ -30,7 +30,7 @@ pub fn router() -> Router<ServerCtx> {
         .route("/pr/:n/collaborators", get(get_collaborators))
         .route("/pr/:n/draft", get(get_draft).put(put_draft))
         .route("/pr/:n/comments", post(post_comment))
-        .route("/pr/:n/files/*path/state", put(put_file_state))
+        .route("/pr/:n/file-state", put(put_file_state))
         .route("/pr/:n/submit", post(post_submit))
         .route("/pr/:n/symbols", get(get_symbols))
         .route("/pr/:n/index-status", get(get_index_status))
@@ -255,16 +255,16 @@ async fn post_comment(State(ctx): State<ServerCtx>, Path(n): Path<u64>, Json(c):
 }
 
 #[derive(Deserialize)]
-struct FileStateBody { viewed: Option<bool>, collapsed: Option<bool> }
+struct FileStateBody { path: String, viewed: Option<bool>, collapsed: Option<bool> }
 
 async fn put_file_state(
     State(ctx): State<ServerCtx>,
-    Path((n, p)): Path<(u64, String)>,
+    Path(n): Path<u64>,
     Json(b): Json<FileStateBody>,
 ) -> Result<Json<draft::Draft>, (StatusCode, String)> {
     let path = state::draft_path(&ctx.slug, n).map_err(err)?;
     let mut d = draft::load(&path, n).map_err(err)?;
-    let entry = d.file_state.entry(p).or_default();
+    let entry = d.file_state.entry(b.path).or_default();
     if let Some(v) = b.viewed { entry.viewed = v; }
     if let Some(c) = b.collapsed { entry.collapsed = c; }
     draft::save(&path, &d).map_err(err)?;

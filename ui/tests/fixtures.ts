@@ -139,15 +139,13 @@ export function installMocks(page: Page) {
     return route.continue();
   });
 
-  page.route(/\/api\/pr\/\d+\/files\/.*\/state$/, (route) => {
+  page.route(/\/api\/pr\/\d+\/file-state$/, (route) => {
     const req = route.request();
     if (req.method() === "PUT") {
-      // parse path from url
-      const m = req.url().match(/\/api\/pr\/\d+\/files\/([^/]+)\/state$/);
-      const path = m ? decodeURIComponent(m[1]) : "";
       const body = JSON.parse(req.postData() || "{}");
+      const path = body.path || "";
       const cur = state.draft.file_state[path] || { viewed: false, collapsed: false };
-      state.draft.file_state[path] = { ...cur, ...body };
+      state.draft.file_state[path] = { ...cur, viewed: body.viewed ?? cur.viewed, collapsed: body.collapsed ?? cur.collapsed };
       return json(route, state.draft);
     }
     return route.continue();

@@ -211,9 +211,9 @@ async function markViewed() {
   const editor = vscode.window.activeTextEditor;
   if (!editor) return;
   const rel = vscode.workspace.asRelativePath(editor.document.uri);
-  const res = await apiFetch(`/api/pr/${session.prNumber}/files/${encodeURIComponent(rel)}/state`, {
+  const res = await apiFetch(`/api/pr/${session.prNumber}/file-state`, {
     method: "PUT",
-    body: JSON.stringify({ state: "viewed" }),
+    body: JSON.stringify({ path: rel, viewed: true }),
   });
   if (res.ok) {
     vscode.window.showInformationMessage(`Marked viewed: ${rel}`);
