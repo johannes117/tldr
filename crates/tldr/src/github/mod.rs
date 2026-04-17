@@ -51,11 +51,21 @@ pub(crate) async fn rest_json<T: serde::de::DeserializeOwned>(
     url: &str,
     body: Option<serde_json::Value>,
 ) -> Result<T> {
-    let mut rb = c.http().request(method, url).header("Authorization", c.bearer());
+    let mut rb = c.http().request(method.clone(), url).header("Authorization", c.bearer());
     if let Some(b) = body { rb = rb.json(&b); }
+    let path_only = url.split('?').next().unwrap_or(url);
+    let started = std::time::Instant::now();
     let resp = rb.send().await?;
-    if !resp.status().is_success() {
-        let status = resp.status();
+    let status = resp.status();
+    tracing::info!(
+        target: "tldr::github",
+        method = %method,
+        path = %path_only,
+        status = status.as_u16(),
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        "github.api"
+    );
+    if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();
         return Err(anyhow!("github {status}: {text}"));
     }
@@ -67,13 +77,22 @@ pub(crate) async fn graphql(
     query: &str,
     variables: serde_json::Value,
 ) -> Result<serde_json::Value> {
+    let started = std::time::Instant::now();
     let resp = c.http()
         .post("https://api.github.com/graphql")
         .header("Authorization", c.bearer())
         .json(&serde_json::json!({ "query": query, "variables": variables }))
         .send().await?;
-    if !resp.status().is_success() {
-        let status = resp.status();
+    let status = resp.status();
+    tracing::info!(
+        target: "tldr::github",
+        method = "POST",
+        path = "/graphql",
+        status = status.as_u16(),
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        "github.api"
+    );
+    if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();
         return Err(anyhow!("graphql {status}: {text}"));
     }

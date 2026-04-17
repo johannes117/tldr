@@ -17,21 +17,42 @@ export type Draft = {
   updated_at: string;
 };
 
+const CSRF = (() => {
+  const el = document.querySelector('meta[name="tldr-csrf"]') as HTMLMetaElement | null;
+  return el?.content ?? "";
+})();
+
 async function j<T>(r: Response): Promise<T> {
   if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
   return r.json();
 }
 
+function mut(url: string, method: string, body?: unknown): Promise<Response> {
+  const headers: Record<string, string> = { "x-tldr-csrf": CSRF };
+  if (body !== undefined) headers["content-type"] = "application/json";
+  return fetch(url, {
+    method,
+    headers,
+    credentials: "omit",
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+}
+
+function getq(url: string): Promise<Response> {
+  return fetch(url, { credentials: "omit" });
+}
+
 export const api = {
-  pr: (n: number) => fetch(`/api/pr/${n}`).then((r) => j<{ pr: PrMeta; worktree: string; slug: string }>(r)),
-  diff: (n: number) => fetch(`/api/pr/${n}/diff`).then((r) => j<Diff>(r)),
-  getDraft: (n: number) => fetch(`/api/pr/${n}/draft`).then((r) => j<Draft>(r)),
-  putDraft: (n: number, d: Draft) =>
-    fetch(`/api/pr/${n}/draft`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(d) }).then((r) => j<Draft>(r)),
+  pr: (n: number) => getq(`/api/pr/${n}`).then((r) => j<{ pr: PrMeta; worktree: string; slug: string }>(r)),
+  diff: (n: number) => getq(`/api/pr/${n}/diff`).then((r) => j<Diff>(r)),
+  getDraft: (n: number) => getq(`/api/pr/${n}/draft`).then((r) => j<Draft>(r)),
+  putDraft: (n: number, d: Draft) => mut(`/api/pr/${n}/draft`, "PUT", d).then((r) => j<Draft>(r)),
   addComment: (n: number, c: { path: string; line: number; side?: string; body: string }) =>
-    fetch(`/api/pr/${n}/comments`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(c) }).then((r) => j<Draft>(r)),
+    mut(`/api/pr/${n}/comments`, "POST", c).then((r) => j<Draft>(r)),
   setFileState: (n: number, path: string, s: Partial<FileState>) =>
-    fetch(`/api/pr/${n}/files/${encodeURI(path)}/state`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(s) }).then((r) => j<Draft>(r)),
+    mut(`/api/pr/${n}/files/${encodeURI(path)}/state`, "PUT", s).then((r) => j<Draft>(r)),
   submit: (n: number) =>
-    fetch(`/api/pr/${n}/submit`, { method: "POST" }).then((r) => j<{ ok: boolean; result: unknown }>(r)),
+    mut(`/api/pr/${n}/submit`, "POST").then((r) => j<{ ok: boolean; result: unknown }>(r)),
+  openInEditor: (body: { path: string; line?: number; col?: number }) =>
+    mut(`/api/editor/open`, "POST", body).then((r) => j<{ ok: boolean }>(r)),
 };

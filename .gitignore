@@ -3,4 +3,4 @@ node_modules/
 ui/dist/
 *.log
 .DS_Store
-Cargo.lock
+ui/tsconfig.tsbuildinfo

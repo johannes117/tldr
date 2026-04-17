@@ -60,6 +60,18 @@ export function PrFiles() {
         <div className="px-4 py-2 border-b flex items-center gap-3">
           <Link to="/pr/$number" params={{ number: String(n) }} className="text-sm text-slate-500">&larr; overview</Link>
           <div className="font-mono text-sm truncate flex-1">{current?.path}</div>
+          <button
+            onClick={() => {
+              if (!current) return;
+              const line = current.hunks[0]?.new_start;
+              api.openInEditor({ path: current.path, line }).catch((e) => alert(`open in editor failed: ${e}`));
+            }}
+            disabled={!current}
+            className="px-3 py-1 border text-sm rounded disabled:opacity-50"
+            title="Open current file in your configured editor"
+          >
+            Open in editor
+          </button>
           <Link to="/pr/$number/review" params={{ number: String(n) }} className="px-3 py-1 bg-slate-900 text-white text-sm rounded">Review</Link>
         </div>
         <div className="text-xs text-slate-500 px-4 py-1 border-b">j/k next/prev · v toggle viewed · c focus comment</div>

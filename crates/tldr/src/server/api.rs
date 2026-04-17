@@ -10,17 +10,84 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use super::ServerCtx;
-use crate::{diff, draft, github, state, worktree};
+use crate::{config, diff, draft, editor, github, state, worktree};
 
 pub fn router() -> Router<ServerCtx> {
     Router::new()
         .route("/health", get(|| async { "ok" }))
+        .route("/session", get(get_session))
+        .route("/session/open-pr", post(post_open_pr))
+        .route("/session/shutdown", post(post_shutdown))
         .route("/pr/:n", get(get_pr))
         .route("/pr/:n/diff", get(get_diff))
         .route("/pr/:n/draft", get(get_draft).put(put_draft))
         .route("/pr/:n/comments", post(post_comment))
         .route("/pr/:n/files/*path/state", put(put_file_state))
         .route("/pr/:n/submit", post(post_submit))
+        .route("/editor/open", post(post_editor_open))
+}
+
+#[derive(Deserialize)]
+struct EditorOpenBody {
+    path: String,
+    line: Option<u32>,
+    col: Option<u32>,
+}
+
+async fn post_editor_open(
+    State(ctx): State<ServerCtx>,
+    Json(b): Json<EditorOpenBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let cfg = config::Config::load().map_err(err)?;
+    let ed = cfg.editor.ok_or_else(|| (StatusCode::BAD_REQUEST, "no editor configured; run `tldr editor <name>`".to_string()))?;
+    editor::launch(&ed, &ctx.worktree, Some(&b.path), b.line, b.col)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    Ok(Json(json!({"ok": true})))
+}
+
+async fn get_session(State(ctx): State<ServerCtx>) -> impl IntoResponse {
+    let prs: Vec<u64> = ctx.prs.lock().await.iter().map(|p| p.number).collect();
+    Json(json!({
+        "pid": std::process::id(),
+        "port": ctx.port,
+        "started_at": ctx.started_at,
+        "slug": format!("{}", ctx.slug),
+        "active_prs": prs,
+    }))
+}
+
+#[derive(Deserialize)]
+struct OpenPrBody { pr_number: u64 }
+
+async fn post_open_pr(State(ctx): State<ServerCtx>, Json(b): Json<OpenPrBody>) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    {
+        let prs = ctx.prs.lock().await;
+        if prs.iter().any(|p| p.number == b.pr_number) {
+            return Ok(Json(json!({"ok": true, "already": true})));
+        }
+    }
+    let client = github::Client::new(ctx.token.clone());
+    let meta = client.fetch_pr(&ctx.slug, b.pr_number).await.map_err(err)?;
+    worktree::fetch_pr_ref(&ctx.repo.root, b.pr_number).map_err(err)?;
+    let wt = state::worktree_path(&ctx.slug, b.pr_number).map_err(err)?;
+    worktree::ensure_worktree(&ctx.repo.root, &wt, b.pr_number).map_err(err)?;
+    let draft_path = state::draft_path(&ctx.slug, b.pr_number).map_err(err)?;
+    if !draft_path.exists() {
+        let d = draft::load(&draft_path, b.pr_number).map_err(err)?;
+        draft::save(&draft_path, &d).map_err(err)?;
+    }
+    ctx.prs.lock().await.push(meta);
+    ctx.write_session().await.ok();
+    Ok(Json(json!({"ok": true, "pr": b.pr_number})))
+}
+
+async fn post_shutdown(State(ctx): State<ServerCtx>) -> impl IntoResponse {
+    let notify = ctx.shutdown.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        notify.notify_waiters();
+    });
+    Json(json!({"ok": true}))
 }
 
 fn err<E: std::fmt::Display>(e: E) -> (StatusCode, String) {
