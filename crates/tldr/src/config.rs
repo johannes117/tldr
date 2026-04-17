@@ -2,6 +2,7 @@ use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use crate::coverage::CoverageConfig;
 use crate::editor::Editor;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -9,6 +10,17 @@ pub struct Config {
     pub editor: Option<Editor>,
     pub port_range: Option<(u16, u16)>,
     pub auto_open: Option<bool>,
+    #[serde(default)]
+    pub coverage: Option<CoverageConfig>,
+    #[serde(default)]
+    pub ai: crate::ai::AiConfig,
+}
+
+pub fn load_repo_config(worktree: &std::path::Path) -> Option<Config> {
+    let p = worktree.join(".tldr/config.toml");
+    if !p.exists() { return None; }
+    let s = std::fs::read_to_string(&p).ok()?;
+    toml::from_str(&s).ok()
 }
 
 fn config_path() -> Result<PathBuf> {

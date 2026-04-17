@@ -1,5 +1,6 @@
 pub mod api;
 pub mod assets;
+pub mod walkthrough;
 
 use anyhow::Result;
 use axum::{
@@ -17,8 +18,10 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use crate::github::PrMeta;
 use crate::indexer::Indexer;
+use crate::lsp::LspPool;
 use crate::repo::{Repo, Slug};
 use crate::session::{self, SessionFile};
+use crate::watcher::WatchRegistry;
 
 #[derive(Clone)]
 pub struct ServerCtx {
@@ -33,10 +36,20 @@ pub struct ServerCtx {
     pub shutdown: Arc<Notify>,
     pub csrf: Arc<String>,
     pub indexer: Arc<Indexer>,
+    pub reviewer: Arc<Mutex<Option<ReviewerIdentity>>>,
+    pub watchers: Arc<Mutex<std::collections::HashMap<u64, Arc<WatchRegistry>>>>,
+    pub lsp: Arc<LspPool>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ReviewerIdentity {
+    pub login: Option<String>,
+    pub email: Option<String>,
 }
 
 impl ServerCtx {
     pub fn new(repo: Repo, slug: Slug, worktree: PathBuf, pr: PrMeta, token: String, port: u16) -> Self {
+        let worktree_clone = worktree.clone();
         let prs = vec![pr.clone()];
         let mut buf = [0u8; 32];
         rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut buf);
@@ -58,6 +71,9 @@ impl ServerCtx {
             shutdown: Arc::new(Notify::new()),
             csrf: Arc::new(csrf),
             indexer,
+            reviewer: Arc::new(Mutex::new(None)),
+            watchers: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            lsp: Arc::new(LspPool::new(worktree_clone)),
         }
     }
 

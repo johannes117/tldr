@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { diffWordsWithSpace } from "diff";
 import { api, type FileDiff, type Line } from "../api";
 import { CommentComposer } from "../components/CommentComposer";
+import { FileTree } from "../components/FileTree";
+import { CoverageGutter } from "../components/CoverageGutter";
 
 export function PrFiles() {
   const { number } = useParams({ from: "/pr/$number/files" });
@@ -11,6 +13,8 @@ export function PrFiles() {
   const qc = useQueryClient();
   const diffQ = useQuery({ queryKey: ["diff", n], queryFn: () => api.diff(n) });
   const draftQ = useQuery({ queryKey: ["draft", n], queryFn: () => api.getDraft(n) });
+  const framingQ = useQuery({ queryKey: ["framing", n], queryFn: () => api.framing(n) });
+  const coverageQ = useQuery({ queryKey: ["coverage", n], queryFn: () => api.coverage(n) });
 
   const files = diffQ.data?.files ?? [];
   const [idx, setIdx] = useState(0);
@@ -41,26 +45,7 @@ export function PrFiles() {
     <div className="h-full flex">
       <aside className="w-72 border-r overflow-y-auto">
         <div className="p-3 text-sm text-slate-500 border-b">Files ({files.length})</div>
-        <ul>
-          {files.map((f, i) => {
-            const viewed = draftQ.data?.file_state?.[f.path]?.viewed;
-            return (
-              <li key={f.path}>
-                <button
-                  onClick={() => setIdx(i)}
-                  className={`w-full text-left px-3 py-1.5 text-sm truncate ${i === idx ? "bg-slate-200" : "hover:bg-slate-100"}`}
-                  title={f.path}
-                >
-                  <span className={viewed ? "line-through text-slate-400" : ""}>{f.path}</span>
-                  {f.is_generated && <span className="ml-1 text-[10px] text-purple-600">gen</span>}
-                  {f.is_large && <span className="ml-1 text-[10px] text-orange-600">large</span>}
-                  {f.status === "renamed" && <span className="ml-1 text-[10px] text-blue-600">ren</span>}
-                  {f.is_image && <span className="ml-1 text-[10px] text-teal-600">img</span>}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+        <FileTree files={files} framing={framingQ.data?.files} draft={draftQ.data} idx={idx} onSelect={setIdx} />
       </aside>
       <section className="flex-1 overflow-y-auto">
         <div className="px-4 py-2 border-b flex items-center gap-3">
@@ -81,7 +66,7 @@ export function PrFiles() {
           <Link to="/pr/$number/review" params={{ number: String(n) }} className="px-3 py-1 bg-slate-900 text-white text-sm rounded">Review</Link>
         </div>
         <div className="text-xs text-slate-500 px-4 py-1 border-b">j/k next/prev · v toggle viewed · c focus comment</div>
-        {current && <FileView n={n} file={current} onJump={(path) => {
+        {current && <FileView n={n} file={current} coverage={coverageQ.data?.files?.[current.path]?.lines} onJump={(path) => {
           const i = files.findIndex((f) => f.path === path);
           if (i >= 0) setIdx(i);
         }} />}
@@ -90,7 +75,7 @@ export function PrFiles() {
   );
 }
 
-function FileView({ n, file, onJump }: { n: number; file: FileDiff; onJump: (p: string) => void }) {
+function FileView({ n, file, onJump, coverage }: { n: number; file: FileDiff; onJump: (p: string) => void; coverage?: Record<string, "covered" | "uncovered" | "none"> }) {
   const qc = useQueryClient();
   const [draft, setDraft] = useState<{ line: number; body: string } | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -149,7 +134,7 @@ function FileView({ n, file, onJump }: { n: number; file: FileDiff; onJump: (p: 
             <table className="w-full font-mono text-xs">
               <tbody>
                 {withWord.map((l, j) => (
-                  <LineRow key={j} l={l} onComment={(line) => setDraft({ line, body: "" })} onJump={onJump} />
+                  <LineRow key={j} l={l} onComment={(line) => setDraft({ line, body: "" })} onJump={onJump} coverage={coverage} />
                 ))}
               </tbody>
             </table>
@@ -246,7 +231,8 @@ function similarity(a: string, b: string): number {
   return (2 * inter) / (A.size + B.size || 1);
 }
 
-function LineRow({ l, onComment, onJump }: { l: EnrichedLine; onComment: (line: number) => void; onJump: (p: string) => void }) {
+function LineRow({ l, onComment, onJump, coverage }: { l: EnrichedLine; onComment: (line: number) => void; onJump: (p: string) => void; coverage?: Record<string, "covered" | "uncovered" | "none"> }) {
+  const covState = l.new_line != null && coverage ? coverage[String(l.new_line)] : undefined;
   const bg = l.kind === "add" ? "bg-green-50" : l.kind === "del" ? "bg-red-50" : "";
   const marker = l.kind === "add" ? "+" : l.kind === "del" ? "-" : " ";
   const ln = l.new_line ?? l.old_line;
@@ -262,6 +248,7 @@ function LineRow({ l, onComment, onJump }: { l: EnrichedLine; onComment: (line: 
       <td className="text-right pr-2 pl-2 text-slate-400 w-12 select-none">{l.old_line ?? ""}</td>
       <td className="text-right pr-2 text-slate-400 w-12 select-none">{l.new_line ?? ""}</td>
       <td className="w-4 text-slate-400 select-none">{marker}</td>
+      <td className="w-2 select-none"><CoverageGutter state={covState} /></td>
       <td className="whitespace-pre-wrap break-all pr-2">
         {content}
         {l.moved && (

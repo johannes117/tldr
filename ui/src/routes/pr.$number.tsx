@@ -1,6 +1,7 @@
 import { Link, useParams } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api";
+import { PrWatchBanner } from "../components/PrWatchBanner";
 
 export function PrOverview() {
   const { number } = useParams({ from: "/pr/$number" });
@@ -12,6 +13,8 @@ export function PrOverview() {
   const { pr, slug, worktree } = q.data!;
 
   return (
+    <>
+    <PrWatchBanner prNumber={n} />
     <div className="p-6 max-w-3xl">
       <div className="text-sm text-slate-500">{slug} #{pr.number}</div>
       <h1 className="text-2xl font-semibold mt-1">{pr.title}</h1>
@@ -24,5 +27,6 @@ export function PrOverview() {
       </div>
       <div className="mt-6 text-xs text-slate-500">Worktree: <code>{worktree}</code></div>
     </div>
+    </>
   );
 }

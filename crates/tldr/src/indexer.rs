@@ -193,7 +193,8 @@ CREATE TABLE IF NOT EXISTS refs (
     to_symbol_id INTEGER,
     kind TEXT NOT NULL,
     site_file TEXT,
-    site_line INTEGER
+    site_line INTEGER,
+    site_text TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_refs_from ON refs(from_symbol_id);
 CREATE INDEX IF NOT EXISTS idx_refs_to ON refs(to_symbol_id);
@@ -385,6 +386,54 @@ impl Indexer {
         })?;
         Ok(rows.filter_map(|r| r.ok()).collect())
     }
+
+    pub fn symbol_by_qualified_name(&self, repo_slug: &str, commit_sha: &str, qname: &str) -> Result<Option<Symbol>> {
+        let conn = self.db.lock().unwrap();
+        let repo_id_val = repo_id(&conn, repo_slug)?;
+        let mut stmt = conn.prepare(
+            "SELECT id, repo_id, commit_sha, file_path, name, qualified_name, kind, start_line, end_line, start_col, end_col, signature FROM symbols WHERE repo_id=?1 AND commit_sha=?2 AND qualified_name=?3 LIMIT 1"
+        )?;
+        let mut rows = stmt.query_map(params![repo_id_val, commit_sha, qname], |r| {
+            Ok(Symbol {
+                id: r.get(0)?, repo_id: r.get(1)?, commit_sha: r.get(2)?, file_path: r.get(3)?,
+                name: r.get(4)?, qualified_name: r.get(5)?, kind: r.get(6)?,
+                start_line: r.get(7)?, end_line: r.get(8)?, start_col: r.get(9)?, end_col: r.get(10)?,
+                signature: r.get(11)?,
+            })
+        })?;
+        Ok(rows.next().and_then(|r| r.ok()))
+    }
+
+    /// Return outgoing call edges (kind='call') joined to symbol qualified_names.
+    pub fn call_edges(&self, repo_slug: &str, commit_sha: &str) -> Result<Vec<CallEdgeRow>> {
+        let conn = self.db.lock().unwrap();
+        let repo_id_val = repo_id(&conn, repo_slug)?;
+        let mut stmt = conn.prepare(
+            "SELECT sf.qualified_name, st.qualified_name, r.site_file, r.site_line, COALESCE(r.site_text,'')
+             FROM refs r
+             JOIN symbols sf ON sf.id = r.from_symbol_id
+             JOIN symbols st ON st.id = r.to_symbol_id
+             WHERE r.repo_id=?1 AND r.commit_sha=?2 AND r.kind='call'"
+        )?;
+        let rows = stmt.query_map(params![repo_id_val, commit_sha], |r| {
+            Ok(CallEdgeRow {
+                from: r.get(0)?, to: r.get(1)?,
+                path: r.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                line: r.get::<_, Option<u32>>(3)?.unwrap_or(0),
+                site_text: r.get(4)?,
+            })
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CallEdgeRow {
+    pub from: String,
+    pub to: String,
+    pub path: String,
+    pub line: u32,
+    pub site_text: String,
 }
 
 fn repo_id(conn: &Connection, slug: &str) -> Result<i64> {

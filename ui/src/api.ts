@@ -74,4 +74,22 @@ export const api = {
     mut(`/api/pr/${n}/submit`, "POST").then((r) => j<{ ok: boolean; result: unknown }>(r)),
   openInEditor: (body: { path: string; line?: number; col?: number }) =>
     mut(`/api/editor/open`, "POST", body).then((r) => j<{ ok: boolean }>(r)),
+  framing: (n: number) =>
+    getq(`/api/pr/${n}/framing`).then((r) => j<Framing>(r)),
+  coverage: (n: number) =>
+    getq(`/api/pr/${n}/coverage`).then((r) => j<CoverageResp>(r)),
+};
+
+export type FileFrame = { path: string; owned: boolean; touched_before: boolean; expertise_score: number };
+export type Framing = { reviewer: { login: string | null; email: string | null }; files: FileFrame[] };
+
+export type CoverageLineState = "covered" | "uncovered" | "none";
+export type CoverageFileEntry = {
+  lines: Record<string, CoverageLineState>;
+  delta: { added_covered: number; added_uncovered: number; percent_before: number | null; percent_after: number | null };
+};
+export type CoverageResp = {
+  files: Record<string, CoverageFileEntry>;
+  summary: { new_uncovered_lines: number; files_with_uncovered: number };
+  source: "ci" | "local" | null;
 };

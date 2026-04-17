@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { api, type Draft } from "../api";
 import { CommentComposer } from "../components/CommentComposer";
+import { PrWatchBanner } from "../components/PrWatchBanner";
 
 export function PrReview() {
   const { number } = useParams({ from: "/pr/$number/review" });
@@ -54,6 +55,8 @@ export function PrReview() {
   const comments = draftQ.data?.comments ?? [];
 
   return (
+    <>
+    <PrWatchBanner prNumber={n} />
     <div className="p-6 max-w-3xl">
       <div className="flex items-center gap-3 mb-4">
         <Link to="/pr/$number" params={{ number: String(n) }} className="text-sm text-slate-500">&larr; overview</Link>
@@ -99,5 +102,6 @@ export function PrReview() {
       </div>
       {msg && <div className="mt-3 text-sm">{msg}</div>}
     </div>
+    </>
   );
 }
