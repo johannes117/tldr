@@ -6,6 +6,7 @@ import { api, type FileDiff, type Line } from "../api";
 import { CommentComposer } from "../components/CommentComposer";
 import { FileTree } from "../components/FileTree";
 import { CoverageGutter } from "../components/CoverageGutter";
+import { WhyPanel } from "../components/WhyPanel";
 
 export function PrFiles() {
   const { number } = useParams({ from: "/pr/$number/files" });
@@ -19,6 +20,7 @@ export function PrFiles() {
   const files = diffQ.data?.files ?? [];
   const [idx, setIdx] = useState(0);
   const current = files[idx];
+  const [whyTarget, setWhyTarget] = useState<{ path: string; line: number; count: number } | null>(null);
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
@@ -66,16 +68,19 @@ export function PrFiles() {
           <Link to="/pr/$number/review" params={{ number: String(n) }} className="px-3 py-1 bg-slate-900 text-white text-sm rounded">Review</Link>
         </div>
         <div className="text-xs text-slate-500 px-4 py-1 border-b">j/k next/prev · v toggle viewed · c focus comment</div>
-        {current && <FileView n={n} file={current} coverage={coverageQ.data?.files?.[current.path]?.lines} onJump={(path) => {
+        {current && <FileView n={n} file={current} coverage={coverageQ.data?.files?.[current.path]?.lines} onWhy={(line, count) => setWhyTarget({ path: current.path, line, count })} onJump={(path) => {
           const i = files.findIndex((f) => f.path === path);
           if (i >= 0) setIdx(i);
         }} />}
       </section>
+      {whyTarget && (
+        <WhyPanel prNumber={n} path={whyTarget.path} line={whyTarget.line} count={whyTarget.count} onClose={() => setWhyTarget(null)} />
+      )}
     </div>
   );
 }
 
-function FileView({ n, file, onJump, coverage }: { n: number; file: FileDiff; onJump: (p: string) => void; coverage?: Record<string, "covered" | "uncovered" | "none"> }) {
+function FileView({ n, file, onJump, onWhy, coverage }: { n: number; file: FileDiff; onJump: (p: string) => void; onWhy: (line: number, count: number) => void; coverage?: Record<string, "covered" | "uncovered" | "none"> }) {
   const qc = useQueryClient();
   const [draft, setDraft] = useState<{ line: number; body: string } | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -130,7 +135,16 @@ function FileView({ n, file, onJump, coverage }: { n: number; file: FileDiff; on
         const withWord = applyWordDiff(h.lines, file.path);
         return (
           <div key={i} className="mb-4 border rounded overflow-hidden">
-            <div className="bg-slate-100 font-mono text-xs px-2 py-1 text-slate-600">{h.header}</div>
+            <div className="bg-slate-100 font-mono text-xs px-2 py-1 text-slate-600 flex items-center gap-2">
+              <span className="flex-1 truncate">{h.header}</span>
+              <button
+                className="px-2 py-0.5 border rounded bg-white hover:bg-slate-50 text-slate-700"
+                onClick={() => onWhy(h.new_start, h.lines.filter((l) => l.kind !== "del").length || 1)}
+                title="Why did this change?"
+              >
+                Why?
+              </button>
+            </div>
             <table className="w-full font-mono text-xs">
               <tbody>
                 {withWord.map((l, j) => (

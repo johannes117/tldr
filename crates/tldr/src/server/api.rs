@@ -12,7 +12,7 @@ use std::collections::HashMap;
 
 use super::{ReviewerIdentity, ServerCtx};
 use crate::watcher::{PrWatcher, WatchRegistry, WatcherDeps};
-use crate::{config, coverage, diff, draft, editor, github, lsp, reviewer_framing, state, worktree};
+use crate::{config, coverage, diff, draft, editor, github, lsp, reviewer_framing, state, why, worktree};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use futures::stream::{Stream, StreamExt};
 use std::convert::Infallible;
@@ -40,6 +40,7 @@ pub fn router() -> Router<ServerCtx> {
         .route("/pr/:n/coverage", get(get_coverage))
         .route("/pr/:n/call-graph", get(get_call_graph))
         .route("/pr/:n/blast/:sym", get(get_blast_radius))
+        .route("/pr/:n/why", get(get_why))
         .route("/editor/open", post(post_editor_open))
         .route("/pr/:n/walkthrough", get(super::walkthrough::get_walkthrough))
         .route("/pr/:n/walkthrough/generate", post(super::walkthrough::post_generate))
@@ -694,6 +695,28 @@ async fn collect_references(
         }
     }
     out
+}
+
+#[derive(Deserialize)]
+struct WhyQuery { path: String, line: u32, count: u32 }
+
+async fn get_why(
+    State(ctx): State<ServerCtx>,
+    Path(n): Path<u64>,
+    Query(q): Query<WhyQuery>,
+) -> Result<Json<why::WhyTrace>, (StatusCode, String)> {
+    let pr = ctx.pr.lock().await.clone();
+    let client = github::Client::new(ctx.token.clone());
+    let body_str = pr.body.clone().unwrap_or_default();
+    let wctx = why::WhyCtx {
+        client: &client,
+        slug: &ctx.slug,
+        repo_root: &ctx.repo.root,
+        worktree: &ctx.worktree,
+        pr_body: Some(&body_str),
+    };
+    let trace = why::trace_hunk(&wctx, n, &q.path, q.line, q.count).await;
+    Ok(Json(trace))
 }
 
 fn classify_diag(v: &serde_json::Value, line: u32) -> (&'static str, String) {

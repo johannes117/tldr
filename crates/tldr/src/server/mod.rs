@@ -139,6 +139,7 @@ pub async fn serve(addr: String, ctx: ServerCtx) -> Result<()> {
         .layer(middleware::from_fn_with_state(ctx.clone(), csrf_guard));
     let app = Router::new()
         .nest("/api", api_router)
+        .merge(crate::rpc::router())
         .layer(cors)
         .fallback(assets::handler)
         .with_state(ctx);

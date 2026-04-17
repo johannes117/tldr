@@ -93,3 +93,22 @@ export type CoverageResp = {
   summary: { new_uncovered_lines: number; files_with_uncovered: number };
   source: "ci" | "local" | null;
 };
+
+export type WhyLinkedIssue = { number: number; title: string; url: string; state: string };
+export type WhyExternalLink = { text: string; url: string };
+export type WhyPriorPr = { number: number; title: string; url: string };
+export type WhyBlameLine = { line: number; author: string; commit_sha: string; commit_msg: string; date: string };
+export type WhyTrace = {
+  pr_description_section: string | null;
+  linked_issues: WhyLinkedIssue[];
+  external_links: WhyExternalLink[];
+  prior_prs: WhyPriorPr[];
+  blame: WhyBlameLine[];
+  release_notes: string | null;
+};
+
+export async function apiWhy(n: number, path: string, line: number, count: number): Promise<WhyTrace> {
+  const q = `path=${encodeURIComponent(path)}&line=${line}&count=${count}`;
+  const r = await fetch(`/api/pr/${n}/why?${q}`, { credentials: "omit" });
+  return j<WhyTrace>(r);
+}

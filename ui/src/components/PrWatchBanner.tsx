@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { getRpcClient } from "../ws";
 
 type WatchEvent =
   | { type: "NewCommits"; old_head: string; new_head: string; count: number }
@@ -18,12 +19,12 @@ export function PrWatchBanner({ prNumber }: { prNumber: number }) {
   }, [prNumber]);
 
   useEffect(() => {
-    const es = new EventSource(`/api/pr/${prNumber}/events`);
-    es.onmessage = (m) => {
-      try { setEvt(JSON.parse(m.data)); } catch {}
-    };
-    es.onerror = () => { es.close(); };
-    return () => es.close();
+    const rpc = getRpcClient();
+    const unsub = rpc.subscribe("github.subscribe", { pr_number: prNumber }, (params) => {
+      const p = params as { event?: WatchEvent } | undefined;
+      if (p?.event) setEvt(p.event);
+    });
+    return unsub;
   }, [prNumber]);
 
   if (!evt) return null;
